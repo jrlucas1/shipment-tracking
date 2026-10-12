@@ -162,4 +162,4 @@ O código, os testes e este README foram escritos com o Claude Code.
 
 As decisões de desenho foram minhas, respondidas uma a uma antes de qualquer código: status pelo maior `occurred_at`, entregue terminal, status desconhecido gravado sem alterar o status, deduplicação por constraint no banco, só consulta sob demanda, atraso calculado na leitura a partir da postagem, falha do agregador como 502 sem gravar nada, stack e SQLite embutido. Em duas eu fui além do que a ferramenta recomendou: pedi o limite de atraso também por envio, e propus organizar o código em portas e adaptadores.
 
-Ainda não revisei o código linha a linha.
+No código, questionei os laços de `src/domain/status.ts` e `src/domain/delay.ts`: perguntei se não bastava olhar o último e o primeiro evento, já que o histórico vem ordenado. Mantive os dois como estão, para o domínio não depender da ordem que o repositório devolve. O resto do código eu ainda não revisei linha a linha.
