@@ -1,0 +1,35 @@
+{
+  "id": "0b9f6c1e-5f0a-4c59-9d0b-3a1c2e4f7a10",
+  "code": "QB123456789BR",
+  "carrier": "correios",
+  "status": "out_for_delivery",
+  "is_delayed": false,
+  "delay_limit_hours": 168,
+  "in_transit_since": "2026-10-01T12:12:00.000Z",
+  "events": [
+    {
+      "occurred_at": "2026-10-01T12:12:00.000Z",
+      "status": "posted",
+      "raw_status": "Objeto postado",
+      "location": "São Paulo/SP"
+    },
+    {
+      "occurred_at": "2026-10-02T17:30:00.000Z",
+      "status": "in_transit",
+      "raw_status": "Objeto em transferência - por favor aguarde",
+      "location": "Cajamar/SP"
+    },
+    {
+      "occurred_at": "2026-10-03T11:05:00.000Z",
+      "status": null,
+      "raw_status": "Objeto em processo de desembaraço lunar",
+      "location": "Curitiba/PR"
+    },
+    {
+      "occurred_at": "2026-10-04T10:40:00.000Z",
+      "status": "out_for_delivery",
+      "raw_status": "Objeto saiu para entrega ao destinatário",
+      "location": "Florianópolis/SC"
+    }
+  ]
+}

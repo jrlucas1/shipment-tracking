@@ -1,0 +1,36 @@
+{
+  "tracking_number": "QB123456789BR",
+  "courier": "correios",
+  "checkpoints": [
+    {
+      "checkpoint_id": "cp_4",
+      "checkpoint_time": "2026-10-04T07:40:00-03:00",
+      "status_text": "Objeto saiu para entrega ao destinatário",
+      "city": "Florianópolis/SC"
+    },
+    {
+      "checkpoint_id": "cp_1",
+      "checkpoint_time": "2026-10-01T09:12:00-03:00",
+      "status_text": "Objeto postado",
+      "city": "São Paulo/SP"
+    },
+    {
+      "checkpoint_id": "cp_3",
+      "checkpoint_time": "2026-10-03T08:05:00-03:00",
+      "status_text": "Objeto em processo de desembaraço lunar",
+      "city": "Curitiba/PR"
+    },
+    {
+      "checkpoint_id": "cp_2",
+      "checkpoint_time": "2026-10-02T14:30:00-03:00",
+      "status_text": "Objeto em transferência - por favor aguarde",
+      "city": "Cajamar/SP"
+    },
+    {
+      "checkpoint_id": "cp_2",
+      "checkpoint_time": "2026-10-02T14:30:00-03:00",
+      "status_text": "Objeto em transferência - por favor aguarde",
+      "city": "Cajamar/SP"
+    }
+  ]
+}
