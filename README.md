@@ -37,7 +37,7 @@ npm start
 | `POST /shipments` | Cadastra `{ code, carrier, delay_limit_hours? }`. Responde 201 no primeiro cadastro e 200 com o envio existente se o código se repete. |
 | `POST /shipments/:id/refresh` | Busca os eventos no agregador e os adiciona ao histórico. |
 | `GET /shipments/:id` | Lê o estado local. Não chama o agregador. |
-| `GET /shipments?delayed=true` | Lista os envios. O parâmetro `delayed` filtra por atraso. |
+| `GET /shipments` | Lista os envios em páginas. Aceita `delayed`, `limit` e `cursor`. |
 
 A API responde 400 para entrada inválida e 404 para envio inexistente. Ela responde 502 quando o agregador falha, e nesse caso não grava nada.
 
@@ -93,7 +93,15 @@ A primeira condição protege a entrega normal. Um envio entregue nunca fica atr
 
 O limite vem do campo `delay_limit_hours` do envio. Se o envio não tem esse campo, vale o limite global. Um envio em `exception` continua a contar tempo.
 
-A API calcula o atraso na leitura, com um relógio injetado ([ports.ts](src/domain/ports.ts)). O resultado aparece no campo `is_delayed` e no filtro `?delayed=true`. A API não grava alertas e não envia avisos. O filtro lê todos os envios e calcula em memória, com duas queries. Com 200 mil eventos, essa leitura levou cerca de meio segundo.
+A API calcula o atraso na leitura, com um relógio injetado ([ports.ts](src/domain/ports.ts)). O resultado aparece no campo `is_delayed` e no filtro `?delayed=true`. A API não grava alertas e não envia avisos.
+
+## Listagem
+
+`GET /shipments` devolve `{ items, next_cursor }`, na ordem de criação dos envios. O parâmetro `limit` vai de 1 a 100 e o padrão é 50. Para ler a página seguinte, envie o `next_cursor` no parâmetro `cursor`. Na última página, `next_cursor` é `null`.
+
+O parâmetro `delayed=true` lista só os envios atrasados, e `delayed=false` lista os outros. O banco aplica esse filtro. Para isso, cada envio guarda o início do trânsito e a indicação de entrega. O repositório calcula esses dois valores com as funções do domínio a cada `refresh`. A comparação com o limite existe em dois lugares: em [delay.ts](src/domain/delay.ts) e no SQL de [repository.ts](src/adapters/sqlite/repository.ts). Um teste em [service.test.ts](test/service.test.ts) compara os dois resultados em cada caso de borda.
+
+O índice `(created_at, id)` atende a ordem da listagem. Com 10 mil envios e 200 mil eventos, uma página de 50 envios levou cerca de 1,6 ms. Sem o índice, levou cerca de 2 ms, porque o banco lê e ordena a tabela inteira a cada página. A leitura de todos os envios sem paginação levava cerca de meio segundo.
 
 ## Histórico sem duplicar
 
@@ -116,7 +124,7 @@ Para uma transportadora nova, adicione linhas à tabela de tradução.
 
 ## Testes
 
-O comando `npm test` roda 72 testes em 6 arquivos.
+O comando `npm test` roda 94 testes em 7 arquivos.
 
 | Critério | Arquivos de teste |
 | --- | --- |
@@ -138,8 +146,8 @@ O comando `npm test` roda 72 testes em 6 arquivos.
 
 O Claude Code escreveu o código, os testes e este README.
 
-Eu tomei as decisões de desenho antes do código, uma por uma: status pelo maior `occurred_at`, `delivered` final, status desconhecido sem efeito no status atual, chave única no banco, consulta só sob demanda, atraso calculado na leitura, resposta 502 sem gravação e SQLite embutido. Pedi o limite de atraso por envio, que a ferramenta não recomendou. Também propus a organização em portas e adaptadores.
+Eu tomei as decisões de desenho antes do código, uma por uma: status pelo maior `occurred_at`, `delivered` final, status desconhecido sem efeito no status atual, chave única no banco, consulta só sob demanda, atraso calculado na leitura, resposta 502 sem gravação e SQLite embutido. Pedi o limite de atraso por envio e a paginação da listagem com filtro no banco. A ferramenta não recomendou nenhum dos dois. Também propus a organização em portas e adaptadores.
 
-No código, questionei os laços de `status.ts` e `delay.ts`. Perguntei se bastava ler o último e o primeiro evento, porque o histórico vem ordenado. Mantive os dois laços, para o domínio não depender da ordem do repositório. Pedi o `EXPLAIN QUERY PLAN` das queries e a medição de um índice a mais. O índice não mudou os tempos e não entrou.
+No código, questionei os laços de `status.ts` e `delay.ts`. Perguntei se bastava ler o último e o primeiro evento, porque o histórico vem ordenado. Mantive os dois laços, para o domínio não depender da ordem do repositório. Pedi o `EXPLAIN QUERY PLAN` das queries e a medição de um índice a mais para o histórico. Esse índice não mudou os tempos e não entrou.
 
 Ainda não revisei o resto do código linha por linha.
