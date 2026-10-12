@@ -150,4 +150,4 @@ Eu tomei as decisões de desenho antes do código, uma por uma: status pelo maio
 
 No código, questionei os laços de `status.ts` e `delay.ts`. Perguntei se bastava ler o último e o primeiro evento, porque o histórico vem ordenado. Mantive os dois laços, para o domínio não depender da ordem do repositório. Pedi o `EXPLAIN QUERY PLAN` das queries e a medição de um índice a mais para o histórico. Esse índice não mudou os tempos e não entrou.
 
-Ainda não revisei o resto do código linha por linha.
+Li por inteiro `src/adapters/sqlite/repository.ts` e `test/app.test.ts`. No adaptador do agregador, perguntei sobre o timeout do `fetch`, a validação do payload e a forma da tabela de tradução. Também perguntei como o cursor da listagem é montado. Ainda não li os outros arquivos por inteiro.
