@@ -9,6 +9,7 @@
   "scripts": {
     "start": "node src/main.ts",
     "fake-aggregator": "node dev/runFakeAggregator.ts",
+    "delay-job": "node src/jobs/delayJob.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

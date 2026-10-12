@@ -1,0 +1,38 @@
+{
+  "data": {
+    "code": "QB123456789BR",
+    "carrier": "correios",
+    "history": [
+      {
+        "uid": "cp_4",
+        "at_ms": 1791110400000,
+        "description": "Objeto saiu para entrega ao destinatário",
+        "place": { "city": "Florianópolis", "state": "SC" }
+      },
+      {
+        "uid": "cp_1",
+        "at_ms": 1790856720000,
+        "description": "Objeto postado",
+        "place": { "city": "São Paulo", "state": "SP" }
+      },
+      {
+        "uid": "cp_3",
+        "at_ms": 1791025500000,
+        "description": "Objeto em processo de desembaraço lunar",
+        "place": { "city": "Curitiba", "state": "PR" }
+      },
+      {
+        "uid": "cp_2",
+        "at_ms": 1790962200000,
+        "description": "Objeto em transferência - por favor aguarde",
+        "place": { "city": "Cajamar", "state": "SP" }
+      },
+      {
+        "uid": "cp_2",
+        "at_ms": 1790962200000,
+        "description": "Objeto em transferência - por favor aguarde",
+        "place": { "city": "Cajamar", "state": "SP" }
+      }
+    ]
+  }
+}

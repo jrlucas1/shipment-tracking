@@ -17,6 +17,8 @@ export interface ShipmentListQuery {
   after: PageCursor | null;
   /** Só atrasados (`true`) ou só não atrasados (`false`) em `now`. Ausente lista todos. */
   delayed?: boolean;
+  /** Só envios que ainda não têm aviso de atraso gravado. */
+  withoutDelayNotice?: boolean;
   now: Date;
   /** Limite para os envios que não têm limite próprio. */
   defaultDelayLimitHours: number;
@@ -31,6 +33,9 @@ export interface ShipmentRepository {
   list(query: ShipmentListQuery): Promise<Shipment[]>;
   /** Eventos que já estão no histórico são ignorados. */
   addEvents(shipmentId: string, events: TrackingEvent[]): Promise<void>;
+  /** Um aviso por envio. Devolve `false`, sem mudar nada, se o envio já tinha aviso. */
+  recordDelayNotice(shipmentId: string, at: Date): Promise<boolean>;
+  findDelayNotice(shipmentId: string): Promise<Date | null>;
 }
 
 export interface Clock {

@@ -32,6 +32,12 @@ const SCHEMA = `
     location TEXT,
     PRIMARY KEY (shipment_id, dedup_key)
   );
+
+  -- A chave primária é o que garante um aviso de atraso por envio.
+  CREATE TABLE IF NOT EXISTS delay_notices (
+    shipment_id TEXT PRIMARY KEY REFERENCES shipments (id),
+    notified_at TEXT NOT NULL
+  );
 `;
 
 interface ShipmentRow {
@@ -100,6 +106,9 @@ export class SqliteShipmentRepository implements ShipmentRepository {
       conditions.push(query.delayed ? IS_DELAYED : `NOT (${IS_DELAYED})`);
       params.push(query.now.getTime(), query.defaultDelayLimitHours);
     }
+    if (query.withoutDelayNotice) {
+      conditions.push("NOT EXISTS (SELECT 1 FROM delay_notices WHERE shipment_id = shipments.id)");
+    }
 
     const where = conditions.length === 0 ? "" : `WHERE ${conditions.join(" AND ")}`;
     const shipmentRows = this.db
@@ -153,6 +162,18 @@ export class SqliteShipmentRepository implements ShipmentRepository {
       this.db.exec("ROLLBACK");
       throw error;
     }
+  }
+
+  async recordDelayNotice(shipmentId: string, at: Date): Promise<boolean> {
+    const result = this.db
+      .prepare("INSERT OR IGNORE INTO delay_notices (shipment_id, notified_at) VALUES (?, ?)")
+      .run(shipmentId, at.toISOString());
+    return result.changes === 1;
+  }
+
+  async findDelayNotice(shipmentId: string): Promise<Date | null> {
+    const row = this.db.prepare("SELECT notified_at FROM delay_notices WHERE shipment_id = ?").get(shipmentId);
+    return row === undefined ? null : new Date(row.notified_at as string);
   }
 
   close(): void {

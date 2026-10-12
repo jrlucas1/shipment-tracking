@@ -1,4 +1,6 @@
-import { inTransitSince, isDelayed } from "./delay.ts";
+import { deliveredAt, delayState, inTransitSince } from "./delay.ts";
+import type { DelayState } from "./delay.ts";
+import { TrackingProviderError } from "./ports.ts";
 import type { Clock, ShipmentRepository, TrackingProvider } from "./ports.ts";
 import { currentStatus } from "./status.ts";
 import type { PageCursor, Shipment, ShipmentStatus } from "./types.ts";
@@ -8,10 +10,27 @@ export interface ShipmentSnapshot {
   /** `null` enquanto nenhum evento com tradução conhecida chegou. */
   status: ShipmentStatus | null;
   isDelayed: boolean;
+  /** Separa o atrasado (ainda em trânsito) do entregue com atraso. */
+  delayState: DelayState;
+  /** Onde o relógio do trânsito parou; `null` enquanto não há entrega. */
+  deliveredAt: Date | null;
   /** Limite que valeu para este envio: o próprio ou o global. */
   delayLimitHours: number;
   inTransitSince: Date | null;
 }
+
+/** O que uma rodada do job de aviso fez. */
+export interface DelayJobReport {
+  /** Envios atrasados e sem aviso que o job reconsultou. */
+  checked: number;
+  notified: number;
+  /** Atrasados no banco local, mas não mais depois da reconsulta. */
+  noLongerDelayed: number;
+  /** Reconsultas que falharam; esses envios ficam para a próxima rodada. */
+  providerFailures: number;
+}
+
+const DELAY_JOB_PAGE_SIZE = 100;
 
 export class ShipmentNotFoundError extends Error {
   override name = "ShipmentNotFoundError";
@@ -65,6 +84,63 @@ export class ShipmentService {
     return this.snapshot(await this.findOrThrow(id));
   }
 
+  async getDelay(id: string): Promise<{ snapshot: ShipmentSnapshot; notifiedAt: Date | null }> {
+    const snapshot = await this.get(id);
+    return { snapshot, notifiedAt: await this.repository.findDelayNotice(id) };
+  }
+
+  /**
+   * Grava o aviso dos envios atrasados que ainda não têm aviso. O banco local pode
+   * estar velho, então cada envio é reconsultado na origem antes: só recebe aviso
+   * o que continua atrasado com o histórico novo. Sem resposta da origem, não há aviso.
+   */
+  async notifyDelays(options: { pageSize?: number } = {}): Promise<DelayJobReport> {
+    const pageSize = options.pageSize ?? DELAY_JOB_PAGE_SIZE;
+    const report: DelayJobReport = { checked: 0, notified: 0, noLongerDelayed: 0, providerFailures: 0 };
+
+    let after: PageCursor | null = null;
+    do {
+      const page: Shipment[] = await this.repository.list({
+        limit: pageSize,
+        after,
+        delayed: true,
+        withoutDelayNotice: true,
+        now: this.clock.now(),
+        defaultDelayLimitHours: this.defaultDelayLimitHours,
+      });
+
+      for (const shipment of page) {
+        report.checked++;
+        const outcome = await this.notifyIfStillDelayed(shipment.id);
+        if (outcome === "notified") report.notified++;
+        if (outcome === "no_longer_delayed") report.noLongerDelayed++;
+        if (outcome === "provider_failure") report.providerFailures++;
+      }
+
+      const last = page.at(-1);
+      after = page.length === pageSize && last !== undefined ? { createdAt: last.createdAt, id: last.id } : null;
+    } while (after !== null);
+
+    return report;
+  }
+
+  private async notifyIfStillDelayed(
+    id: string,
+  ): Promise<"notified" | "already_notified" | "no_longer_delayed" | "provider_failure"> {
+    let fresh: ShipmentSnapshot;
+    try {
+      fresh = await this.refresh(id);
+    } catch (error) {
+      if (!(error instanceof TrackingProviderError)) throw error;
+      return "provider_failure";
+    }
+    if (!fresh.isDelayed) return "no_longer_delayed";
+
+    // Outra rodada pode ter gravado o aviso enquanto esta reconsultava.
+    const recorded = await this.repository.recordDelayNotice(id, this.clock.now());
+    return recorded ? "notified" : "already_notified";
+  }
+
   async list(options: {
     limit: number;
     after: PageCursor | null;
@@ -98,10 +174,13 @@ export class ShipmentService {
 
   private snapshot(shipment: Shipment, now: Date = this.clock.now()): ShipmentSnapshot {
     const delayLimitHours = shipment.delayLimitHours ?? this.defaultDelayLimitHours;
+    const state = delayState(shipment.events, delayLimitHours, now);
     return {
       shipment,
       status: currentStatus(shipment.events),
-      isDelayed: isDelayed(shipment.events, delayLimitHours, now),
+      isDelayed: state === "delayed",
+      delayState: state,
+      deliveredAt: deliveredAt(shipment.events),
       delayLimitHours,
       inTransitSince: inTransitSince(shipment.events),
     };
