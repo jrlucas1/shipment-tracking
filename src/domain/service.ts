@@ -1,4 +1,5 @@
-import { inTransitSince, isDelayed } from "./delay.ts";
+import { deliveredAt, delayState, inTransitSince } from "./delay.ts";
+import type { DelayState } from "./delay.ts";
 import type { Clock, ShipmentRepository, TrackingProvider } from "./ports.ts";
 import { currentStatus } from "./status.ts";
 import type { PageCursor, Shipment, ShipmentStatus } from "./types.ts";
@@ -8,6 +9,10 @@ export interface ShipmentSnapshot {
   /** `null` enquanto nenhum evento com tradução conhecida chegou. */
   status: ShipmentStatus | null;
   isDelayed: boolean;
+  /** Separa o atrasado (ainda em trânsito) do entregue com atraso. */
+  delayState: DelayState;
+  /** Onde o relógio do trânsito parou; `null` enquanto não há entrega. */
+  deliveredAt: Date | null;
   /** Limite que valeu para este envio: o próprio ou o global. */
   delayLimitHours: number;
   inTransitSince: Date | null;
@@ -98,10 +103,13 @@ export class ShipmentService {
 
   private snapshot(shipment: Shipment, now: Date = this.clock.now()): ShipmentSnapshot {
     const delayLimitHours = shipment.delayLimitHours ?? this.defaultDelayLimitHours;
+    const state = delayState(shipment.events, delayLimitHours, now);
     return {
       shipment,
       status: currentStatus(shipment.events),
-      isDelayed: isDelayed(shipment.events, delayLimitHours, now),
+      isDelayed: state === "delayed",
+      delayState: state,
+      deliveredAt: deliveredAt(shipment.events),
       delayLimitHours,
       inTransitSince: inTransitSince(shipment.events),
     };
