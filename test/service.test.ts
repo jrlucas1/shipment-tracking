@@ -28,6 +28,10 @@ async function registerShipment(delayLimitHours: number | null = null): Promise<
   return snapshot.shipment.id;
 }
 
+async function listAll(delayed?: boolean) {
+  return (await service.list({ limit: 100, after: null, delayed })).snapshots;
+}
+
 describe("register", () => {
   it("cadastra na origem e localmente, sem status ainda", async () => {
     const { snapshot, created } = await service.register({
@@ -49,7 +53,7 @@ describe("register", () => {
     expect(second.created).toBe(false);
     expect(second.snapshot.shipment).toEqual(first.snapshot.shipment);
     expect(provider.registered).toEqual(["BR1"]);
-    expect(await service.list()).toHaveLength(1);
+    expect(await listAll()).toHaveLength(1);
   });
 
   it("se a origem recusa, nada é gravado", async () => {
@@ -59,7 +63,7 @@ describe("register", () => {
       service.register({ code: "BR1", carrier: "correios", delayLimitHours: null }),
     ).rejects.toThrow(TrackingProviderError);
 
-    expect(await service.list()).toEqual([]);
+    expect(await listAll()).toEqual([]);
   });
 });
 
@@ -186,8 +190,136 @@ describe("atraso", () => {
 
     clock.set("2026-10-10T12:00:00Z");
 
-    expect((await service.list({ delayed: true })).map((s) => s.shipment.code)).toEqual(["LATE"]);
-    expect((await service.list({ delayed: false })).map((s) => s.shipment.code)).toEqual(["ONTIME"]);
-    expect(await service.list()).toHaveLength(2);
+    expect((await listAll(true)).map((s) => s.shipment.code)).toEqual(["LATE"]);
+    expect((await listAll(false)).map((s) => s.shipment.code)).toEqual(["ONTIME"]);
+    expect(await listAll()).toHaveLength(2);
+  });
+});
+
+describe("list paginada", () => {
+  async function registerMany(count: number): Promise<void> {
+    for (let i = 0; i < count; i++) {
+      await service.register({ code: `BR${i}`, carrier: "correios", delayLimitHours: null });
+    }
+  }
+
+  async function walk(limit: number, delayed?: boolean): Promise<string[][]> {
+    const pages: string[][] = [];
+    let after = null;
+    do {
+      const page = await service.list({ limit, after, delayed });
+      pages.push(page.snapshots.map((s) => s.shipment.code));
+      after = page.nextCursor;
+    } while (after !== null);
+    return pages;
+  }
+
+  it("sem envios devolve uma página vazia e sem cursor", async () => {
+    expect(await service.list({ limit: 10, after: null })).toEqual({ snapshots: [], nextCursor: null });
+  });
+
+  it("percorre todos os envios sem repetir nem pular, mesmo criados no mesmo instante", async () => {
+    await registerMany(5);
+
+    const pages = await walk(2);
+
+    expect(pages.map((page) => page.length)).toEqual([2, 2, 1]);
+    expect(pages.flat().sort()).toEqual(["BR0", "BR1", "BR2", "BR3", "BR4"]);
+  });
+
+  it("não devolve cursor quando a última página fica exatamente cheia", async () => {
+    await registerMany(4);
+
+    expect((await walk(2)).map((page) => page.length)).toEqual([2, 2]);
+  });
+
+  it("segue a ordem de criação", async () => {
+    for (const [code, createdAt] of [
+      ["PRIMEIRO", "2026-10-01T00:00:00Z"],
+      ["SEGUNDO", "2026-10-02T00:00:00Z"],
+      ["TERCEIRO", "2026-10-03T00:00:00Z"],
+    ] as const) {
+      clock.set(createdAt);
+      await service.register({ code, carrier: "correios", delayLimitHours: null });
+    }
+
+    expect(await walk(2)).toEqual([["PRIMEIRO", "SEGUNDO"], ["TERCEIRO"]]);
+  });
+
+  it("com filtro de atraso as páginas vêm cheias, pulando os envios que não entram", async () => {
+    await registerMany(6);
+    const all = await listAll();
+    for (const [index, snapshot] of all.entries()) {
+      // Metade entregue, metade só postada.
+      provider.events =
+        index % 2 === 0
+          ? [event("posted", "2026-10-01T12:00:00Z")]
+          : [event("posted", "2026-10-01T12:00:00Z"), event("delivered", "2026-10-02T12:00:00Z")];
+      await service.refresh(snapshot.shipment.id);
+    }
+    clock.set("2026-10-10T12:00:00Z");
+
+    expect((await walk(2, true)).map((page) => page.length)).toEqual([2, 1]);
+    expect((await walk(2, false)).map((page) => page.length)).toEqual([2, 1]);
+    expect((await walk(2, true)).flat().sort()).toEqual(
+      all.filter((_, index) => index % 2 === 0).map((s) => s.shipment.code).sort(),
+    );
+  });
+
+  it("o filtro do banco concorda com isDelayed em cada caso de borda", async () => {
+    const POSTED = "2026-10-01T12:00:00Z";
+    const histories = {
+      SEM_EVENTOS: [],
+      SO_POSTADO: [event("posted", POSTED)],
+      ENTREGUE: [event("posted", POSTED), event("delivered", "2026-10-02T12:00:00Z")],
+      ENTREGUE_E_DEPOIS_EXCECAO: [
+        event("posted", POSTED),
+        event("delivered", "2026-10-02T12:00:00Z"),
+        event("exception", "2026-10-03T12:00:00Z"),
+      ],
+      EXCECAO: [event("posted", POSTED), event("exception", "2026-10-02T12:00:00Z")],
+      SO_DESCONHECIDO: [event(null, POSTED)],
+      SEM_POSTAGEM: [event("in_transit", "2026-10-03T12:00:00Z")],
+      POSTADO_MAIS_TARDE: [event("posted", "2026-10-03T12:00:00Z")],
+    };
+    for (const [code, events] of Object.entries(histories)) {
+      const { snapshot } = await service.register({ code, carrier: "correios", delayLimitHours: null });
+      provider.events = events;
+      await service.refresh(snapshot.shipment.id);
+    }
+    const short = await service.register({ code: "LIMITE_CURTO", carrier: "correios", delayLimitHours: 24 });
+    provider.events = [event("posted", POSTED)];
+    await service.refresh(short.snapshot.shipment.id);
+
+    // No limite global exato, um milissegundo depois e bem depois.
+    for (const now of ["2026-10-02T13:00:00Z", "2026-10-04T12:00:00.000Z", "2026-10-04T12:00:00.001Z", "2026-12-01T00:00:00Z"]) {
+      clock.set(now);
+      const codes = (snapshots: { shipment: { code: string } }[]) => snapshots.map((s) => s.shipment.code).sort();
+      const everything = await listAll();
+
+      expect(codes(await listAll(true)), now).toEqual(codes(everything.filter((s) => s.isDelayed)));
+      expect(codes(await listAll(false)), now).toEqual(codes(everything.filter((s) => !s.isDelayed)));
+    }
+
+    clock.set("2026-10-04T12:00:00.001Z");
+    expect((await listAll(true)).map((s) => s.shipment.code).sort()).toEqual([
+      "EXCECAO",
+      "LIMITE_CURTO",
+      "SO_DESCONHECIDO",
+      "SO_POSTADO",
+    ]);
+  });
+
+  it("evento antigo que chega depois corrige o início do trânsito usado no filtro", async () => {
+    const id = await registerShipment();
+    provider.events = [event("in_transit", "2026-10-05T12:00:00Z")];
+    await service.refresh(id);
+    clock.set("2026-10-06T12:00:00Z");
+    expect(await listAll(true)).toHaveLength(0);
+
+    provider.events = [event("posted", "2026-10-01T12:00:00Z")];
+    await service.refresh(id);
+
+    expect(await listAll(true)).toHaveLength(1);
   });
 });

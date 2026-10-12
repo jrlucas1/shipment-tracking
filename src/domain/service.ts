@@ -1,7 +1,7 @@
 import { inTransitSince, isDelayed } from "./delay.ts";
 import type { Clock, ShipmentRepository, TrackingProvider } from "./ports.ts";
 import { currentStatus } from "./status.ts";
-import type { Shipment, ShipmentStatus } from "./types.ts";
+import type { PageCursor, Shipment, ShipmentStatus } from "./types.ts";
 
 export interface ShipmentSnapshot {
   shipment: Shipment;
@@ -65,12 +65,29 @@ export class ShipmentService {
     return this.snapshot(await this.findOrThrow(id));
   }
 
-  async list(filter: { delayed?: boolean } = {}): Promise<ShipmentSnapshot[]> {
-    const shipments = await this.repository.list();
-    const snapshots = shipments.map((shipment) => this.snapshot(shipment));
+  async list(options: {
+    limit: number;
+    after: PageCursor | null;
+    delayed?: boolean;
+  }): Promise<{ snapshots: ShipmentSnapshot[]; nextCursor: PageCursor | null }> {
+    const now = this.clock.now();
 
-    if (filter.delayed === undefined) return snapshots;
-    return snapshots.filter((snapshot) => snapshot.isDelayed === filter.delayed);
+    // Pede um a mais só para saber se existe próxima página.
+    const shipments = await this.repository.list({
+      ...options,
+      limit: options.limit + 1,
+      now,
+      defaultDelayLimitHours: this.defaultDelayLimitHours,
+    });
+
+    const page = shipments.slice(0, options.limit);
+    const last = page.at(-1);
+    const hasMore = shipments.length > options.limit;
+
+    return {
+      snapshots: page.map((shipment) => this.snapshot(shipment, now)),
+      nextCursor: hasMore && last !== undefined ? { createdAt: last.createdAt, id: last.id } : null,
+    };
   }
 
   private async findOrThrow(id: string): Promise<Shipment> {
@@ -79,12 +96,12 @@ export class ShipmentService {
     return shipment;
   }
 
-  private snapshot(shipment: Shipment): ShipmentSnapshot {
+  private snapshot(shipment: Shipment, now: Date = this.clock.now()): ShipmentSnapshot {
     const delayLimitHours = shipment.delayLimitHours ?? this.defaultDelayLimitHours;
     return {
       shipment,
       status: currentStatus(shipment.events),
-      isDelayed: isDelayed(shipment.events, delayLimitHours, this.clock.now()),
+      isDelayed: isDelayed(shipment.events, delayLimitHours, now),
       delayLimitHours,
       inTransitSince: inTransitSince(shipment.events),
     };

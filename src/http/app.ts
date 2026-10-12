@@ -3,6 +3,7 @@ import type { FastifyInstance } from "fastify";
 import { TrackingProviderError } from "../domain/ports.ts";
 import { ShipmentNotFoundError } from "../domain/service.ts";
 import type { ShipmentService, ShipmentSnapshot } from "../domain/service.ts";
+import { decodeCursor, encodeCursor } from "./cursor.ts";
 
 const registerBody = {
   type: "object",
@@ -19,6 +20,8 @@ const listQuery = {
   type: "object",
   properties: {
     delayed: { type: "boolean" },
+    limit: { type: "integer", minimum: 1, maximum: 100, default: 50 },
+    cursor: { type: "string" },
   },
 } as const;
 
@@ -61,12 +64,22 @@ export function buildApp(service: ShipmentService, options: { logger?: boolean }
     return toResponse(await service.get(request.params.id));
   });
 
-  app.get<{ Querystring: { delayed?: boolean } }>(
+  app.get<{ Querystring: { delayed?: boolean; limit: number; cursor?: string } }>(
     "/shipments",
     { schema: { querystring: listQuery } },
-    async (request) => {
-      const snapshots = await service.list({ delayed: request.query.delayed });
-      return snapshots.map(toResponse);
+    async (request, reply) => {
+      const { delayed, limit, cursor } = request.query;
+
+      const after = cursor === undefined ? null : decodeCursor(cursor);
+      if (cursor !== undefined && after === null) {
+        return reply.status(400).send({ error: "invalid_request", message: "cursor is not valid" });
+      }
+
+      const { snapshots, nextCursor } = await service.list({ delayed, limit, after });
+      return {
+        items: snapshots.map(toResponse),
+        next_cursor: nextCursor === null ? null : encodeCursor(nextCursor),
+      };
     },
   );
 

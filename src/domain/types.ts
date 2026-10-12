@@ -30,6 +30,12 @@ export interface Shipment {
   events: TrackingEvent[];
 }
 
+/** Posição na listagem, que segue a ordem (createdAt, id). */
+export interface PageCursor {
+  createdAt: Date;
+  id: string;
+}
+
 export interface NewShipment {
   code: string;
   carrier: string;

@@ -16,6 +16,10 @@ beforeEach(async () => {
   });
 });
 
+async function listAll() {
+  return repository.list({ limit: 100, after: null, now: new Date(0), defaultDelayLimitHours: 72 });
+}
+
 async function storedEvents() {
   return (await repository.findById(shipment.id))?.events ?? [];
 }
@@ -44,7 +48,7 @@ describe("SqliteShipmentRepository", () => {
     });
 
     expect(again).toEqual(shipment);
-    expect(await repository.list()).toHaveLength(1);
+    expect(await listAll()).toHaveLength(1);
   });
 
   it("mesmo id externo entra uma vez, ainda que o resto do evento mude", async () => {
@@ -94,6 +98,25 @@ describe("SqliteShipmentRepository", () => {
     expect(await storedEvents()).toEqual([posted, unknown, delivery]);
   });
 
+  it("list respeita limit e continua depois do cursor", async () => {
+    for (const day of [2, 3, 4]) {
+      await repository.create({
+        code: `BR${day}`,
+        carrier: "correios",
+        delayLimitHours: null,
+        createdAt: new Date(`2026-10-0${day}T00:00:00Z`),
+      });
+    }
+    const query = { limit: 2, now: new Date(0), defaultDelayLimitHours: 72 };
+
+    const first = await repository.list({ ...query, after: null });
+    const last = first[1];
+    const second = await repository.list({ ...query, after: { createdAt: last!.createdAt, id: last!.id } });
+
+    expect(first.map((s) => s.code)).toEqual(["BR1", "BR2"]);
+    expect(second.map((s) => s.code)).toEqual(["BR3", "BR4"]);
+  });
+
   it("list devolve cada envio com o seu histórico", async () => {
     const other = await repository.create({
       code: "BR2",
@@ -107,7 +130,7 @@ describe("SqliteShipmentRepository", () => {
       event("posted", "2026-10-02T09:00:00Z"),
     ]);
 
-    const listed = await repository.list();
+    const listed = await listAll();
 
     expect(listed.map((s) => [s.code, s.events.map((e) => e.status)])).toEqual([
       ["BR1", ["posted"]],

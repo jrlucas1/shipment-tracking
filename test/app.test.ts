@@ -81,7 +81,7 @@ describe("rotas", () => {
 
     expect(response.statusCode).toBe(502);
     expect(response.json()).toEqual({ error: "tracking_provider_unavailable" });
-    expect((await app.inject({ method: "GET", url: "/shipments" })).json()).toEqual([]);
+    expect((await app.inject({ method: "GET", url: "/shipments" })).json().items).toEqual([]);
   });
 
   it("refresh ingere, GET lê o estado local sem chamar a origem", async () => {
@@ -133,7 +133,7 @@ describe("rotas", () => {
     await app.inject({ method: "POST", url: `/shipments/${id}/refresh` });
 
     const codes = async (url: string) =>
-      (await app.inject({ method: "GET", url })).json().map((s: { code: string }) => s.code);
+      (await app.inject({ method: "GET", url })).json().items.map((s: { code: string }) => s.code);
 
     expect(await codes("/shipments?delayed=true")).toEqual([]);
     expect(await codes("/shipments?delayed=false")).toEqual(["BR1"]);
@@ -143,6 +143,47 @@ describe("rotas", () => {
     expect(await codes("/shipments?delayed=true")).toEqual(["BR1"]);
     expect(await codes("/shipments?delayed=false")).toEqual([]);
     expect(await codes("/shipments")).toEqual(["BR1"]);
+  });
+
+  it("GET /shipments pagina com limit e cursor", async () => {
+    for (const code of ["BR1", "BR2", "BR3"]) await register({ code, carrier: "correios" });
+
+    const first = (await app.inject({ method: "GET", url: "/shipments?limit=2" })).json();
+    const second = (
+      await app.inject({ method: "GET", url: `/shipments?limit=2&cursor=${first.next_cursor}` })
+    ).json();
+
+    expect(first.items).toHaveLength(2);
+    expect(first.next_cursor).toEqual(expect.any(String));
+    expect(second.items).toHaveLength(1);
+    expect(second.next_cursor).toBeNull();
+    expect([...first.items, ...second.items].map((s: { code: string }) => s.code).sort()).toEqual([
+      "BR1",
+      "BR2",
+      "BR3",
+    ]);
+  });
+
+  it("GET /shipments devolve no máximo 50 por padrão", async () => {
+    for (let i = 0; i < 51; i++) await register({ code: `BR${i}`, carrier: "correios" });
+
+    const page = (await app.inject({ method: "GET", url: "/shipments" })).json();
+
+    expect(page.items).toHaveLength(50);
+    expect(page.next_cursor).toEqual(expect.any(String));
+  });
+
+  it.each([
+    ["limit zero", "/shipments?limit=0"],
+    ["limit acima de 100", "/shipments?limit=101"],
+    ["limit que não é número", "/shipments?limit=muitos"],
+    ["limit fracionário", "/shipments?limit=1.5"],
+    ["cursor que não foi emitido pela API", "/shipments?cursor=abc"],
+  ])("GET /shipments recusa %s com 400", async (_name, url) => {
+    const response = await app.inject({ method: "GET", url });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error).toBe("invalid_request");
   });
 
   it("GET /shipments recusa filtro que não é booleano", async () => {

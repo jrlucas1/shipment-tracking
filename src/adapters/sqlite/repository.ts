@@ -1,7 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import type { ShipmentRepository } from "../../domain/ports.ts";
+import { inTransitSince } from "../../domain/delay.ts";
+import type { ShipmentListQuery, ShipmentRepository } from "../../domain/ports.ts";
+import { currentStatus } from "../../domain/status.ts";
 import type { NewShipment, Shipment, ShipmentStatus, TrackingEvent } from "../../domain/types.ts";
+
+const MS_PER_HOUR = 60 * 60 * 1000;
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS shipments (
@@ -9,8 +13,14 @@ const SCHEMA = `
     code TEXT NOT NULL UNIQUE,
     carrier TEXT NOT NULL,
     delay_limit_hours INTEGER,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    -- Resumo do histórico, regravado a cada addEvents, para filtrar atraso no banco.
+    in_transit_since_ms INTEGER,
+    delivered INTEGER NOT NULL DEFAULT 0
   );
+
+  -- A listagem pagina nesta ordem; sem o índice cada página varre e ordena a tabela inteira.
+  CREATE INDEX IF NOT EXISTS shipments_by_creation ON shipments (created_at, id);
 
   CREATE TABLE IF NOT EXISTS tracking_events (
     shipment_id TEXT NOT NULL REFERENCES shipments (id),
@@ -78,13 +88,33 @@ export class SqliteShipmentRepository implements ShipmentRepository {
     return row === undefined ? null : this.withEvents(row as unknown as ShipmentRow);
   }
 
-  async list(): Promise<Shipment[]> {
+  async list(query: ShipmentListQuery): Promise<Shipment[]> {
+    const conditions: string[] = [];
+    const params: (string | number)[] = [];
+
+    if (query.after !== null) {
+      conditions.push("(created_at, id) > (?, ?)");
+      params.push(query.after.createdAt.toISOString(), query.after.id);
+    }
+    if (query.delayed !== undefined) {
+      conditions.push(query.delayed ? IS_DELAYED : `NOT (${IS_DELAYED})`);
+      params.push(query.now.getTime(), query.defaultDelayLimitHours);
+    }
+
+    const where = conditions.length === 0 ? "" : `WHERE ${conditions.join(" AND ")}`;
     const shipmentRows = this.db
-      .prepare("SELECT * FROM shipments ORDER BY created_at, id")
-      .all() as unknown as ShipmentRow[];
+      .prepare(`SELECT * FROM shipments ${where} ORDER BY created_at, id LIMIT ?`)
+      .all(...params, query.limit) as unknown as ShipmentRow[];
+
+    if (shipmentRows.length === 0) return [];
+
+    const placeholders = shipmentRows.map(() => "?").join(", ");
     const eventRows = this.db
-      .prepare("SELECT * FROM tracking_events ORDER BY occurred_at, dedup_key")
-      .all() as unknown as EventRow[];
+      .prepare(
+        `SELECT * FROM tracking_events WHERE shipment_id IN (${placeholders})
+         ORDER BY occurred_at, dedup_key`,
+      )
+      .all(...shipmentRows.map((row) => row.id)) as unknown as EventRow[];
 
     const eventsByShipment = new Map<string, TrackingEvent[]>();
     for (const row of eventRows) {
@@ -117,6 +147,7 @@ export class SqliteShipmentRepository implements ShipmentRepository {
           event.location,
         );
       }
+      this.updateSummary(shipmentId);
       this.db.exec("COMMIT");
     } catch (error) {
       this.db.exec("ROLLBACK");
@@ -129,12 +160,36 @@ export class SqliteShipmentRepository implements ShipmentRepository {
   }
 
   private withEvents(row: ShipmentRow): Shipment {
+    return toShipment(row, this.eventsOf(row.id));
+  }
+
+  private eventsOf(shipmentId: string): TrackingEvent[] {
     const eventRows = this.db
       .prepare("SELECT * FROM tracking_events WHERE shipment_id = ? ORDER BY occurred_at, dedup_key")
-      .all(row.id) as unknown as EventRow[];
-    return toShipment(row, eventRows.map(toEvent));
+      .all(shipmentId) as unknown as EventRow[];
+    return eventRows.map(toEvent);
+  }
+
+  // As colunas saem das mesmas funções do domínio que calculam o atraso na leitura.
+  private updateSummary(shipmentId: string): void {
+    const events = this.eventsOf(shipmentId);
+    this.db
+      .prepare("UPDATE shipments SET in_transit_since_ms = ?, delivered = ? WHERE id = ?")
+      .run(
+        inTransitSince(events)?.getTime() ?? null,
+        currentStatus(events) === "delivered" ? 1 : 0,
+        shipmentId,
+      );
   }
 }
+
+// Mesma conta de `isDelayed`: não entregue e em trânsito há mais tempo que o limite.
+// Parâmetros, nesta ordem: agora em ms e limite global em horas.
+const IS_DELAYED = `(
+  delivered = 0
+  AND in_transit_since_ms IS NOT NULL
+  AND (? - in_transit_since_ms) > COALESCE(delay_limit_hours, ?) * ${MS_PER_HOUR}
+)`;
 
 /** Id da origem quando existe; senão, o que identifica o evento: quando, o quê e onde. */
 function dedupKey(event: TrackingEvent): string {
