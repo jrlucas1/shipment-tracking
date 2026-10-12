@@ -66,12 +66,14 @@ export function buildApp(service: ShipmentService, options: { logger?: boolean }
 
   // Fica numa rota própria para a resposta do envio continuar como está.
   app.get<{ Params: { id: string } }>("/shipments/:id/delay", async (request) => {
-    const snapshot = await service.get(request.params.id);
+    const { snapshot, notifiedAt } = await service.getDelay(request.params.id);
     return {
       state: snapshot.delayState,
       delay_limit_hours: snapshot.delayLimitHours,
       in_transit_since: snapshot.inTransitSince?.toISOString() ?? null,
       delivered_at: snapshot.deliveredAt?.toISOString() ?? null,
+      // Quando o job gravou o aviso de atraso deste envio; `null` se nunca gravou.
+      notified_at: notifiedAt?.toISOString() ?? null,
     };
   });
 

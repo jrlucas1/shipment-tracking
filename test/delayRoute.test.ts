@@ -48,6 +48,7 @@ describe("GET /shipments/:id/delay", () => {
       delay_limit_hours: 72,
       in_transit_since: null,
       delivered_at: null,
+      notified_at: null,
     });
   });
 
@@ -63,6 +64,7 @@ describe("GET /shipments/:id/delay", () => {
       delay_limit_hours: 72,
       in_transit_since: "2026-10-01T12:00:00.000Z",
       delivered_at: null,
+      notified_at: null,
     });
   });
 
@@ -75,6 +77,7 @@ describe("GET /shipments/:id/delay", () => {
       delay_limit_hours: 72,
       in_transit_since: "2026-10-01T12:00:00.000Z",
       delivered_at: "2026-10-06T12:00:00.000Z",
+      notified_at: null,
     });
     const delayed = await app.inject({ method: "GET", url: "/shipments?delayed=true" });
     expect(delayed.json().items).toEqual([]);
